@@ -79,6 +79,7 @@ def init_db():
         priority INTEGER DEFAULT 3,
         impact INTEGER DEFAULT 5,
         status TEXT DEFAULT 'Backlog',
+        notes TEXT,
         vision_id INTEGER,
         sprint_id INTEGER,
         user_id INTEGER,
@@ -89,6 +90,13 @@ def init_db():
         FOREIGN KEY (user_id) REFERENCES users (user_id)
     )
     """)
+    
+    # Migrasi sederhana jika kolom 'notes' belum ada
+    try:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN notes TEXT")
+    except:
+        pass
+        
     conn.commit()
     conn.close()
 
@@ -242,13 +250,14 @@ else:
                     t_cat = c2.selectbox("Kategori", ["Career", "Personal", "Learning", "Health", "Finances"])
                     t_prio = c2.slider("Prioritas (1-5)", 1, 5, 3)
                     t_imp = st.slider("Dampak (1-10)", 1, 10, 5)
+                    t_notes = st.text_area("Catatan Awal (Opsional)")
                     if st.form_submit_button("Simpan ke Backlog"):
                         vid = df_visions_sidebar[df_visions_sidebar['vision_name'] == t_vision]['vision_id'].values[0]
                         conn = get_connection(); cursor = conn.cursor()
                         cursor.execute("""
-                            INSERT INTO tasks (task_name, category, priority, impact, vision_id, user_id, created_at, updated_at)
-                            VALUES (?,?,?,?,?,?,?,?)
-                        """, (t_name, t_cat, t_prio, t_imp, int(vid), u_id, now_wib(), now_wib()))
+                            INSERT INTO tasks (task_name, category, priority, impact, notes, vision_id, user_id, created_at, updated_at)
+                            VALUES (?,?,?,?,?,?,?,?,?)
+                        """, (t_name, t_cat, t_prio, t_imp, t_notes, int(vid), u_id, now_wib(), now_wib()))
                         conn.commit(); conn.close(); st.rerun()
 
             with tab1:
@@ -267,10 +276,11 @@ else:
                             c1, c2 = st.columns(2)
                             et_prio = c1.slider("Prio", 1, 5, int(t['priority']))
                             et_imp = c2.slider("Imp", 1, 10, int(t['impact']))
+                            et_notes = st.text_area("Catatan", value=t['notes'] if t['notes'] else "")
                             if st.form_submit_button("Simpan Perubahan"):
                                 conn = get_connection(); cursor = conn.cursor()
-                                cursor.execute("UPDATE tasks SET task_name=?, priority=?, impact=?, updated_at=? WHERE task_id=?",
-                                             (et_name, et_prio, et_imp, now_wib(), t['task_id']))
+                                cursor.execute("UPDATE tasks SET task_name=?, priority=?, impact=?, notes=?, updated_at=? WHERE task_id=?",
+                                             (et_name, et_prio, et_imp, et_notes, now_wib(), t['task_id']))
                                 conn.commit(); conn.close(); st.rerun()
                             if st.form_submit_button("🗑️ Hapus Tugas"):
                                 conn = get_connection(); cursor = conn.cursor()
@@ -278,7 +288,7 @@ else:
                                 conn.commit(); conn.close(); st.rerun()
 
     # ==============================
-    # 🚀 SPRINTS (FIXED & IMPROVED)
+    # 🚀 SPRINTS
     # ==============================
     elif menu == "🚀 Sprints":
         if not focus_vid:
@@ -348,7 +358,6 @@ else:
                 if not avail_tasks.empty and not active_sprints.empty:
                     with st.form("assign_form"):
                         target_s = st.selectbox("Pilih Target Sprint", active_sprints['sprint_name'])
-                        # Format label dengan score agar user tahu mana yang penting
                         task_options = {f"⭐ {row['score']} | {row['task_name']}": row['task_id'] for _, row in avail_tasks.iterrows()}
                         selected_labels = st.multiselect("Pilih Tugas dari Backlog", list(task_options.keys()))
                         
@@ -363,7 +372,7 @@ else:
                     st.info("Pastikan ada tugas di Backlog dan Sprint yang belum selesai.")
 
     # ==============================
-    # ⚙️ EXECUTION
+    # ⚙️ EXECUTION (UPDATED WITH NOTES)
     # ==============================
     elif menu == "⚙️ Execution":
         if not focus_vid:
@@ -387,16 +396,27 @@ else:
                         for _, t in subset.iterrows():
                             with st.container(border=True):
                                 st.write(f"**{t['task_name']}**")
-                                new_s = st.selectbox("Update Progres:", ["Todo", "In Progress", "Done", "Unassign"], 
-                                                     key=f"ex_{t['task_id']}", 
-                                                     index=status_list.index(status) if status in status_list else 0)
-                                if st.button("Update", key=f"up_{t['task_id']}"):
-                                    cursor = conn.cursor()
-                                    if new_s == "Unassign":
-                                        cursor.execute("UPDATE tasks SET status='Backlog', sprint_id=NULL WHERE task_id=?", (t['task_id'],))
-                                    else:
-                                        cursor.execute("UPDATE tasks SET status=? WHERE task_id=?", (new_s, t['task_id']))
-                                    conn.commit(); st.rerun()
+                                
+                                # Form Mini untuk setiap task agar notes bisa di-update
+                                with st.form(key=f"exec_form_{t['task_id']}"):
+                                    new_s = st.selectbox("Update Progres:", ["Todo", "In Progress", "Done", "Unassign"], 
+                                                         index=status_list.index(status) if status in status_list else 0)
+                                    
+                                    # FITUR BARU: Catatan Progres
+                                    new_notes = st.text_area("Catatan Progres:", 
+                                                           value=t['notes'] if t['notes'] else "", 
+                                                           placeholder="Tulis kendala atau update di sini...",
+                                                           key=f"note_{t['task_id']}")
+                                    
+                                    if st.form_submit_button("Simpan Update"):
+                                        cursor = conn.cursor()
+                                        if new_s == "Unassign":
+                                            cursor.execute("UPDATE tasks SET status='Backlog', notes=?, sprint_id=NULL, updated_at=? WHERE task_id=?", 
+                                                         (new_notes, now_wib(), t['task_id']))
+                                        else:
+                                            cursor.execute("UPDATE tasks SET status=?, notes=?, updated_at=? WHERE task_id=?", 
+                                                         (new_s, new_notes, now_wib(), t['task_id']))
+                                        conn.commit(); st.rerun()
             conn.close()
 
     # ==============================
@@ -432,4 +452,4 @@ else:
                 st.bar_chart(df_all['category'].value_counts())
 
 st.divider()
-st.caption(f"Memory AI Focus v6.1 | Logged in: {st.session_state.get('username')} | {now_wib().strftime('%H:%M')}")
+st.caption(f"Memory AI Focus v6.2 | Catatan Aktif ✅ | User: {st.session_state.get('username')} | {now_wib().strftime('%H:%M')}")
