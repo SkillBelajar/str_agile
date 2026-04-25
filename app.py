@@ -13,6 +13,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- CSS Global untuk Animasi ---
+st.markdown("""
+<style>
+    /* Animasi masuk (Fade In + Slide Up) */
+    @keyframes fadeInSlide {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Menerapkan animasi pada form dan expander */
+    div[data-testid="stForm"], div[data-testid="stExpander"] {
+        animation: fadeInSlide 0.4s ease-out;
+    }
+    
+    /* Transisi interaktif halus pada tombol */
+    .stButton > button {
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.3s ease !important;
+    }
+    .stButton > button:hover {
+        transform: translateY(-2px);
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # --- Timezone WIB ---
 def now_wib():
     return datetime.now(ZoneInfo("Asia/Jakarta"))
@@ -382,17 +406,46 @@ else:
                 st.info(f"Tidak ada Sprint Aktif untuk '{focus_option}'. Silakan aktifkan sprint di menu Sprints.")
             else:
                 sel_s = st.selectbox("Pilih Sprint Kerja", active_s['sprint_name'])
-                sid = active_s[active_s['sprint_name'] == sel_s]['sprint_id'].values[0]
+                
+                # Ambil data detail untuk sprint yang dipilih
+                selected_sprint = active_s[active_s['sprint_name'] == sel_s].iloc[0]
+                sid = selected_sprint['sprint_id']
+                
+                # --- Kalkulasi Sisa Hari ---
+                end_date_str = selected_sprint['end_date']
+                try:
+                    # Parse string tanggal menjadi objek date, lalu hitung selisih dengan hari ini
+                    end_date_obj = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+                    today = now_wib().date()
+                    sisa_hari = (end_date_obj - today).days
+                    
+                    if sisa_hari > 0:
+                        sisa_text = f"⏳ **Sisa waktu:** {sisa_hari} hari"
+                    elif sisa_hari == 0:
+                        sisa_text = "⏳ **Sisa waktu:** Hari terakhir sprint!"
+                    else:
+                        sisa_text = f"⚠️ **Sisa waktu:** Terlambat {abs(sisa_hari)} hari"
+                except Exception:
+                    sisa_text = "⏳ **Sisa waktu:** Format tanggal tidak valid"
+
+                # Menampilkan Tanggal Mulai & Akhir bersebelahan dengan Sisa Hari
+                c_info1, c_info2 = st.columns([2, 1])
+                c_info1.info(f"🗓️ **Periode Sprint:** {selected_sprint['start_date']} s/d {selected_sprint['end_date']}")
+                if "Terlambat" in sisa_text:
+                    c_info2.error(sisa_text)  # Gunakan warna merah (error) jika terlambat
+                else:
+                    c_info2.info(sisa_text)   # Gunakan warna biru (info) jika masih ada waktu
+                
                 tasks = pd.read_sql_query(f"SELECT * FROM tasks WHERE sprint_id={sid}", conn)
                 
                 cols = st.columns(3)
                 status_list = ["Todo", "In Progress", "Done"]
                 
-                # Pemetaan Warna: Kuning, Biru, Hijau
+                # Pemetaan Warna: Kuning, Biru, Hijau (Tone Adjusted untuk Kontras Tinggi)
                 color_config = {
-                    "Todo": {"bg": "#FFF3CD", "text": "#856404", "icon": "🟡"},       # Kuning
-                    "In Progress": {"bg": "#CCE5FF", "text": "#004085", "icon": "🔵"}, # Biru
-                    "Done": {"bg": "#D4EDDA", "text": "#155724", "icon": "🟢"}         # Hijau
+                    "Todo": {"bg": "#FFF4CC", "text": "#4D3800", "icon": "🟡"},       # Kuning (Soft bg, text cokelat gelap)
+                    "In Progress": {"bg": "#D6E8FF", "text": "#002759", "icon": "🔵"}, # Biru (Soft bg, text navy gelap)
+                    "Done": {"bg": "#D1F2D9", "text": "#0B421A", "icon": "🟢"}         # Hijau (Soft bg, text hijau tua gelap)
                 }
 
                 for i, status in enumerate(status_list):
@@ -408,8 +461,10 @@ else:
                                             padding: 8px 12px; 
                                             border-radius: 6px; 
                                             margin-bottom: 12px;
-                                            font-weight: bold;
-                                            border: 1px solid {color_config[status]['text']}40;">
+                                            font-weight: 600;
+                                            border: 1px solid {color_config[status]['text']}60;
+                                            transition: background-color 0.5s ease, color 0.5s ease;
+                                            animation: fadeInSlide 0.5s ease-out;">
                                     {t['task_name']}
                                 </div>
                                 """, unsafe_allow_html=True)
@@ -448,20 +503,66 @@ else:
         conn.close()
         
         if df_all.empty:
-            st.info("Belum ada data.")
+            st.info("Belum ada data untuk dianalisis. Mulailah dengan membuat Visi dan Tugas!")
         else:
-            st.subheader(f"Statistik: {focus_option}")
+            st.subheader(f"📊 Dashboard Statistik: {focus_option}")
+            st.markdown("---")
+            
+            # Kalkulasi Data
             total = len(df_all)
             done = len(df_all[df_all['status'] == 'Done'])
+            in_progress = len(df_all[df_all['status'] == 'In Progress'])
+            todo = len(df_all[df_all['status'].isin(['Todo', 'Backlog'])])
             
-            c1, c2 = st.columns(2)
-            c1.metric("Penyelesaian", f"{(done/total*100):.1f}%" if total > 0 else "0%")
-            c2.metric("Total Tugas", total)
+            # --- Baris Metrik Utama ---
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("🎯 Penyelesaian", f"{(done/total*100):.1f}%" if total > 0 else "0%")
+            with col2:
+                st.metric("📦 Total Tugas", total)
+            with col3:
+                st.metric("🔥 In Progress", in_progress)
+            with col4:
+                st.metric("📌 Belum Selesai", todo)
             
+            # --- Progress Bar ---
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("##### 🚀 Progres Keseluruhan")
             st.progress(done/total if total > 0 else 0)
+            st.markdown("<br>", unsafe_allow_html=True)
             
-            st.write("#### Status Tugas")
-            st.bar_chart(df_all['status'].value_counts())
+            # --- Visualisasi & Insight ---
+            c_chart, c_insight = st.columns([2, 1])
+            
+            with c_chart:
+                with st.container(border=True):
+                    st.write("#### 📊 Distribusi Status Tugas")
+                    st.bar_chart(df_all['status'].value_counts())
+                    
+            with c_insight:
+                with st.container(border=True):
+                    st.write("#### 💡 Ringkasan Fokus")
+                    if total > 0:
+                        # Pesan Dinamis
+                        if done == total:
+                            st.success("🎉 Luar biasa! Semua tugas telah selesai.")
+                        elif (done/total) > 0.5:
+                            st.info("🔥 Lebih dari setengah jalan menuju garis akhir. Teruskan!")
+                        elif in_progress > 0:
+                            st.warning("⚡ Terus kerjakan tugas yang sedang berjalan!")
+                        else:
+                            st.error("⏳ Mari mulai ambil tugas dari backlog Anda.")
+                        
+                        st.markdown("---")
+                        st.write("**Top Tugas Mendesak (Belum Selesai):**")
+                        # Mengambil 3 tugas dengan prioritas & dampak tertinggi yang belum selesai
+                        top_tasks = df_all[df_all['status'] != 'Done'].sort_values(by=['priority', 'impact'], ascending=[False, False]).head(3)
+                        
+                        if not top_tasks.empty:
+                            for _, t in top_tasks.iterrows():
+                                st.write(f"🔸 **{t['task_name']}** (Prio: {t['priority']})")
+                        else:
+                            st.write("✅ Tidak ada tugas mendesak.")
 
 st.divider()
 st.caption(f"Memory AI Focus v6.2 | Catatan Aktif ✅ | User: {st.session_state.get('username')} | {now_wib().strftime('%H:%M')}")
