@@ -75,7 +75,6 @@ def init_db():
     CREATE TABLE IF NOT EXISTS tasks (
         task_id INTEGER PRIMARY KEY AUTOINCREMENT,
         task_name TEXT NOT NULL,
-        category TEXT,
         priority INTEGER DEFAULT 3,
         impact INTEGER DEFAULT 5,
         status TEXT DEFAULT 'Backlog',
@@ -247,17 +246,16 @@ else:
                     t_name = c1.text_input("Nama Tugas")
                     t_vision_list = [focus_option] if focus_vid else df_visions_sidebar[df_visions_sidebar['status']=='Active']['vision_name'].tolist()
                     t_vision = c1.selectbox("Tautkan ke Visi", t_vision_list)
-                    t_cat = c2.selectbox("Kategori", ["Career", "Personal", "Learning", "Health", "Finances"])
                     t_prio = c2.slider("Prioritas (1-5)", 1, 5, 3)
-                    t_imp = st.slider("Dampak (1-10)", 1, 10, 5)
+                    t_imp = c2.slider("Dampak (1-10)", 1, 10, 5)
                     t_notes = st.text_area("Catatan Awal (Opsional)")
                     if st.form_submit_button("Simpan ke Backlog"):
                         vid = df_visions_sidebar[df_visions_sidebar['vision_name'] == t_vision]['vision_id'].values[0]
                         conn = get_connection(); cursor = conn.cursor()
                         cursor.execute("""
-                            INSERT INTO tasks (task_name, category, priority, impact, notes, vision_id, user_id, created_at, updated_at)
-                            VALUES (?,?,?,?,?,?,?,?,?)
-                        """, (t_name, t_cat, t_prio, t_imp, t_notes, int(vid), u_id, now_wib(), now_wib()))
+                            INSERT INTO tasks (task_name, priority, impact, notes, vision_id, user_id, created_at, updated_at)
+                            VALUES (?,?,?,?,?,?,?,?)
+                        """, (t_name, t_prio, t_imp, t_notes, int(vid), u_id, now_wib(), now_wib()))
                         conn.commit(); conn.close(); st.rerun()
 
             with tab1:
@@ -372,7 +370,7 @@ else:
                     st.info("Pastikan ada tugas di Backlog dan Sprint yang belum selesai.")
 
     # ==============================
-    # ⚙️ EXECUTION (UPDATED WITH NOTES)
+    # ⚙️ EXECUTION (UPDATED WITH NOTES & COLORS)
     # ==============================
     elif menu == "⚙️ Execution":
         if not focus_vid:
@@ -389,20 +387,39 @@ else:
                 
                 cols = st.columns(3)
                 status_list = ["Todo", "In Progress", "Done"]
+                
+                # Pemetaan Warna: Kuning, Biru, Hijau
+                color_config = {
+                    "Todo": {"bg": "#FFF3CD", "text": "#856404", "icon": "🟡"},       # Kuning
+                    "In Progress": {"bg": "#CCE5FF", "text": "#004085", "icon": "🔵"}, # Biru
+                    "Done": {"bg": "#D4EDDA", "text": "#155724", "icon": "🟢"}         # Hijau
+                }
+
                 for i, status in enumerate(status_list):
                     with cols[i]:
-                        st.markdown(f"### {status}")
+                        st.markdown(f"### {color_config[status]['icon']} {status}")
                         subset = tasks[tasks['status'] == status]
                         for _, t in subset.iterrows():
                             with st.container(border=True):
-                                st.write(f"**{t['task_name']}**")
+                                # Header Kartu Tugas dengan Latar Warna
+                                st.markdown(f"""
+                                <div style="background-color: {color_config[status]['bg']}; 
+                                            color: {color_config[status]['text']}; 
+                                            padding: 8px 12px; 
+                                            border-radius: 6px; 
+                                            margin-bottom: 12px;
+                                            font-weight: bold;
+                                            border: 1px solid {color_config[status]['text']}40;">
+                                    {t['task_name']}
+                                </div>
+                                """, unsafe_allow_html=True)
                                 
                                 # Form Mini untuk setiap task agar notes bisa di-update
                                 with st.form(key=f"exec_form_{t['task_id']}"):
                                     new_s = st.selectbox("Update Progres:", ["Todo", "In Progress", "Done", "Unassign"], 
                                                          index=status_list.index(status) if status in status_list else 0)
                                     
-                                    # FITUR BARU: Catatan Progres
+                                    # Catatan Progres
                                     new_notes = st.text_area("Catatan Progres:", 
                                                            value=t['notes'] if t['notes'] else "", 
                                                            placeholder="Tulis kendala atau update di sini...",
@@ -443,13 +460,8 @@ else:
             
             st.progress(done/total if total > 0 else 0)
             
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.write("#### Status Tugas")
-                st.bar_chart(df_all['status'].value_counts())
-            with col_b:
-                st.write("#### Beban Kategori")
-                st.bar_chart(df_all['category'].value_counts())
+            st.write("#### Status Tugas")
+            st.bar_chart(df_all['status'].value_counts())
 
 st.divider()
 st.caption(f"Memory AI Focus v6.2 | Catatan Aktif ✅ | User: {st.session_state.get('username')} | {now_wib().strftime('%H:%M')}")
